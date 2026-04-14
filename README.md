@@ -71,6 +71,10 @@ Expected response when GPU is active:
 }
 ```
 
+### GPU proof on Google Colab (no local GPU required)
+
+Open [`notebooks/colab_gpu_smoke_test.ipynb`](notebooks/colab_gpu_smoke_test.ipynb) in Colab (**Runtime → GPU**), clone this repo to `/content/avatar` (or upload a zip), run all cells. It downloads `wav2lip_gan.pth`, loads the same `wav2lip_model.py`, and prints **measured inference latency in ms** on a real T4/L4 GPU — useful when reviewers need evidence beyond a CPU-only demo.
+
 ---
 
 ## Requirements
@@ -347,6 +351,8 @@ asyncio.run(stream())
 ├── requirements.txt             ← Python dependencies
 ├── setup_models.py              ← downloads wav2lip_gan.pth from HuggingFace
 ├── README.md
+├── notebooks/
+│   └── colab_gpu_smoke_test.ipynb  ← Colab: timed Wav2Lip inference on GPU
 ├── checkpoints/
 │   └── wav2lip_gan.pth          ← model weights (downloaded by setup_models.py)
 ├── server/
