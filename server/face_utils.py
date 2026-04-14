@@ -108,7 +108,8 @@ class FaceProcessor:
         # Model output: (96,96,3) float32 RGB [0,1] -> BGR uint8
         gen_rgb = (generated_face_01 * 255.0).clip(0, 255).astype(np.uint8)
         gen_bgr = cv2.cvtColor(gen_rgb, cv2.COLOR_RGB2BGR)
-        gen_up = cv2.resize(gen_bgr, (face_w, face_h), interpolation=cv2.INTER_LANCZOS4)
+        # INTER_LINEAR is much faster than LANCZOS4 and visually sufficient here.
+        gen_up = cv2.resize(gen_bgr, (face_w, face_h), interpolation=cv2.INTER_LINEAR)
 
         # Build a mouth-focused soft mask:
         # - ellipse centered around mouth

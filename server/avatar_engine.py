@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
 
@@ -53,6 +55,10 @@ class AvatarEngine:
 
         # Pre-allocate reusable GPU tensors to avoid allocation overhead
         self._face_tensor: torch.Tensor | None = None
+        self._mel_tensor: torch.Tensor | None = None
+        self._dtype = torch.float16 if device == "cuda" else torch.float32
+        self._use_autocast = device == "cuda"
+        self._jpeg_quality = int(os.environ.get("JPEG_QUALITY", "80"))
 
         # Latency tracking
         self._last_latency_ms: float = 0.0
@@ -86,10 +92,14 @@ class AvatarEngine:
 
         logger.info("Loading Wav2Lip from %s on %s …", path, device)
         model = load_wav2lip(str(path), device=device)
+        if device == "cuda":
+            torch.backends.cudnn.benchmark = True
+            model = model.half()
 
         # Warm up model with a dummy forward pass so first real inference is fast
-        dummy_audio = torch.zeros(1, 1, 80, 16, device=device)
-        dummy_face = torch.zeros(1, 6, 96, 96, device=device)
+        warm_dtype = torch.float16 if device == "cuda" else torch.float32
+        dummy_audio = torch.zeros(1, 1, 80, 16, device=device, dtype=warm_dtype)
+        dummy_face = torch.zeros(1, 6, 96, 96, device=device, dtype=warm_dtype)
         with torch.no_grad():
             _ = model(dummy_audio, dummy_face)
         logger.info("Wav2Lip warmed up. Device: %s", device)
@@ -108,8 +118,9 @@ class AvatarEngine:
         Raises:
             ValueError: if no face is found.
         """
-        # Limit to 512×512 so the base frame isn't enormous
-        image_bgr = resize_keep_aspect(image_bgr, 512, 512)
+        # Bound avatar frame size to keep compositing/JPEG encode fast.
+        max_side = int(os.environ.get("MAX_AVATAR_SIDE", "448"))
+        image_bgr = resize_keep_aspect(image_bgr, max_side, max_side)
 
         self._avatar = self._face_proc.prepare(image_bgr)
         self._audio_buf.reset()
@@ -190,7 +201,7 @@ class AvatarEngine:
 
         t0 = time.perf_counter()
         frame_bgr = self._infer_frame(mel_chunks[-1])   # use the most recent chunk
-        jpeg = frame_to_jpeg(frame_bgr)
+        jpeg = frame_to_jpeg(frame_bgr, quality=self._jpeg_quality)
         latency = (time.perf_counter() - t0) * 1000
         self._last_latency_ms = latency
         self._total_frames += 1
@@ -204,7 +215,8 @@ class AvatarEngine:
         face_np = self._avatar.face_input  # (96, 96, 6) float32 [0,1]
         # (6, 96, 96) → (1, 6, 96, 96)
         face_t = torch.from_numpy(face_np).permute(2, 0, 1).unsqueeze(0)
-        self._face_tensor = face_t.to(self._device)
+        self._face_tensor = face_t.to(self._device, dtype=self._dtype, non_blocking=True)
+        self._mel_tensor = torch.zeros((1, 1, 80, MEL_STEP_SIZE), device=self._device, dtype=self._dtype)
 
     @torch.no_grad()
     def _infer_frame(self, mel_chunk: np.ndarray) -> np.ndarray:
@@ -220,12 +232,20 @@ class AvatarEngine:
         """
         assert self._avatar is not None
         assert self._face_tensor is not None
+        assert self._mel_tensor is not None
 
-        # Build mel tensor: (1, 1, 80, 16)
-        mel_t = torch.from_numpy(mel_chunk).unsqueeze(0).unsqueeze(0).to(self._device)
+        # Reuse preallocated mel tensor to avoid per-frame allocations/copies.
+        mel_src = torch.from_numpy(mel_chunk).to(self._dtype)
+        self._mel_tensor[0, 0].copy_(mel_src, non_blocking=True)
 
         # Forward pass
-        pred = self._model(mel_t, self._face_tensor)  # (1, 3, 96, 96)
+        autocast_ctx = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if self._use_autocast
+            else nullcontext()
+        )
+        with autocast_ctx:
+            pred = self._model(self._mel_tensor, self._face_tensor)  # (1, 3, 96, 96)
         pred_np = pred.squeeze(0).permute(1, 2, 0).cpu().numpy()  # (96, 96, 3) [0,1]
 
         # Composite back into the full avatar frame
