@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  avatar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: realtime-avatar
+    ports:
+      - "8000:8000"
+
+    # ── GPU access ────────────────────────────────────────────────────────────
+    # Requires: NVIDIA Container Toolkit (nvidia-ctk runtime configure)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # ── Mount checkpoints from host ───────────────────────────────────────────
+    # Place wav2lip_gan.pth in ./checkpoints/ on your host machine
+    volumes:
+      - ./checkpoints:/app/checkpoints:ro
+
+    environment:
+      - CHECKPOINT_PATH=/app/checkpoints/wav2lip_gan.pth
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    # ── Restart policy ────────────────────────────────────────────────────────
+    restart: unless-stopped
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

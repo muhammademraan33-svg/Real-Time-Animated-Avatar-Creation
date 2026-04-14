@@ -1,0 +1,46 @@
+# ── Model weights (large binary files — download via setup_models.py) ────────
+checkpoints/*.pth
+checkpoints/*.pt
+checkpoints/*.bin
+checkpoints/*.onnx
+
+# Keep the empty checkpoints/ folder so the volume mount path exists
+!checkpoints/.gitkeep
+
+# ── Stray duplicate directory created by bad shell expansion ──────────────────
+checkpoints;C/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Docker artifacts ───────────────────────────────────────────────────────────
+# (Dockerfile, docker-compose.yml, .dockerignore are intentionally committed)
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs & temp ───────────────────────────────────────────────────────────────
+*.log
+*.tmp
+*.temp

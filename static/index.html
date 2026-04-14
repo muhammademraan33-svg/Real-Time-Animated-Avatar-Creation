@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Real-Time Lipsync Avatar</title>
+<style>
+  /* ── Reset & base ──────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #161922;
+    --border:   #252a36;
+    --accent:   #6c63ff;
+    --accent2:  #00d4aa;
+    --danger:   #ff4757;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --radius:   12px;
+  }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ── Header ────────────────────────────────────────────────────────────── */
+  header {
+    width: 100%;
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  header svg { flex-shrink: 0; }
+  header h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.3px; }
+  header span { font-size: .8rem; color: var(--muted); margin-left: auto; }
+
+  /* ── Main layout ───────────────────────────────────────────────────────── */
+  main {
+    width: 100%;
+    max-width: 1100px;
+    padding: 32px 20px;
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+
+  /* ── Cards ─────────────────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .card h2 {
+    font-size: .85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* ── Drop zone ─────────────────────────────────────────────────────────── */
+  #drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+  }
+  #drop-zone:hover, #drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(108,99,255,.06);
+  }
+  #drop-zone p { color: var(--muted); font-size: .9rem; margin-top: 8px; }
+  #drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+  #avatar-preview {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 8px;
+    display: none;
+    margin-top: 12px;
+  }
+
+  /* ── Upload button ─────────────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: .9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary  { background: var(--accent);  color: #fff; }
+  .btn-success  { background: var(--accent2); color: #000; }
+  .btn-danger   { background: var(--danger);  color: #fff; }
+  .btn-outline  { background: transparent; color: var(--text); border: 1px solid var(--border); }
+
+  #upload-btn { width: 100%; margin-top: 12px; justify-content: center; }
+
+  /* ── Status badge ──────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .78rem;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+  .badge-ok     { background: rgba(0,212,170,.15); color: var(--accent2); }
+  .badge-warn   { background: rgba(255,71,87,.15);  color: var(--danger); }
+  .badge-idle   { background: rgba(100,116,139,.15); color: var(--muted); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot-ok   { background: var(--accent2); animation: pulse 1.5s infinite; }
+  .dot-warn { background: var(--danger); }
+  .dot-idle { background: var(--muted); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  /* ── Video output ──────────────────────────────────────────────────────── */
+  #video-card { display: flex; flex-direction: column; }
+  #video-wrap {
+    position: relative;
+    flex: 1;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    min-height: 360px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #avatar-canvas {
+    max-width: 100%;
+    max-height: 520px;
+    display: block;
+  }
+  #idle-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; color: var(--muted);
+    font-size: .95rem; text-align: center;
+    padding: 16px;
+  }
+  #idle-overlay svg { opacity: .3; }
+
+  /* ── Controls ──────────────────────────────────────────────────────────── */
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Stats bar ─────────────────────────────────────────────────────────── */
+  .stats {
+    display: flex;
+    gap: 20px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .stat { display: flex; flex-direction: column; }
+  .stat-label { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .stat-value { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-value.fast { color: var(--accent2); }
+  .stat-value.slow { color: var(--danger); }
+
+  /* ── Log console ───────────────────────────────────────────────────────── */
+  #log {
+    margin-top: 16px;
+    background: #0a0c10;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: .78rem;
+    color: var(--muted);
+    max-height: 120px;
+    overflow-y: auto;
+    line-height: 1.6;
+  }
+  #log .entry-ok    { color: var(--accent2); }
+  #log .entry-err   { color: var(--danger); }
+  #log .entry-info  { color: #7dd3fc; }
+
+  /* ── Latency bar ───────────────────────────────────────────────────────── */
+  .latency-bar-wrap {
+    margin-top: 10px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  #latency-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--accent2);
+    transition: width .3s, background .3s;
+    border-radius: 3px;
+  }
+
+  /* ── Audio level ───────────────────────────────────────────────────────── */
+  .meter {
+    display: flex;
+    gap: 2px;
+    margin-top: 10px;
+    align-items: flex-end;
+    height: 28px;
+  }
+  .meter-bar {
+    flex: 1;
+    background: var(--border);
+    border-radius: 2px;
+    transition: height .05s;
+    min-height: 3px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <!-- Icon -->
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <circle cx="16" cy="16" r="15" fill="#6c63ff22" stroke="#6c63ff" stroke-width="1.5"/>
+    <ellipse cx="16" cy="13" rx="7" ry="8" fill="#6c63ff55" stroke="#6c63ff" stroke-width="1.5"/>
+    <path d="M10 20 Q16 26 22 20" stroke="#00d4aa" stroke-width="2" fill="none" stroke-linecap="round"/>
+  </svg>
+  <h1>Real-Time Lipsync Avatar</h1>
+  <span id="server-status-badge">
+    <span class="badge badge-idle"><span class="dot dot-idle"></span>Connecting…</span>
+  </span>
+</header>
+
+<main>
+  <!-- ── Left panel ── -->
+  <aside>
+    <div class="card">
+      <h2>1 · Upload Avatar Photo</h2>
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" />
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.5">
+          <rect x="3" y="3" width="18" height="18" rx="3"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <p>Drop a portrait photo here<br/>or click to choose</p>
+      </div>
+      <img id="avatar-preview" alt="Avatar preview" />
+      <button id="upload-btn" class="btn btn-primary" disabled>
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Set as Avatar
+      </button>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <h2>2 · Microphone</h2>
+      <p style="font-size:.85rem;color:var(--muted);margin-bottom:12px">
+        Audio is streamed to the server as 16-bit PCM (16 kHz mono) in real time.
+      </p>
+      <div class="meter" id="meter">
+        <div class="meter-bar" id="mb1"></div><div class="meter-bar" id="mb2"></div>
+        <div class="meter-bar" id="mb3"></div><div class="meter-bar" id="mb4"></div>
+        <div class="meter-bar" id="mb5"></div><div class="meter-bar" id="mb6"></div>
+        <div class="meter-bar" id="mb7"></div><div class="meter-bar" id="mb8"></div>
+        <div class="meter-bar" id="mb9"></div><div class="meter-bar" id="mb10"></div>
+        <div class="meter-bar" id="mb11"></div><div class="meter-bar" id="mb12"></div>
+        <div class="meter-bar" id="mb13"></div><div class="meter-bar" id="mb14"></div>
+        <div class="meter-bar" id="mb15"></div><div class="meter-bar" id="mb16"></div>
+      </div>
+      <div class="controls" style="margin-top:16px">
+        <button id="start-btn" class="btn btn-success" disabled>
+          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/></svg>
+          Start
+        </button>
+        <button id="stop-btn" class="btn btn-danger" disabled>
+          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          Stop
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Right panel ── -->
+  <section>
+    <div class="card" id="video-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <h2 style="margin:0">Live Avatar Output</h2>
+        <span id="live-badge">
+          <span class="badge badge-idle"><span class="dot dot-idle"></span>Idle</span>
+        </span>
+      </div>
+
+      <div id="video-wrap">
+        <canvas id="avatar-canvas"></canvas>
+        <div id="idle-overlay">
+          <svg width="64" height="64" fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24">
+            <circle cx="12" cy="7" r="4"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
+          </svg>
+          <span>Upload a photo and press <strong>Start</strong></span>
+        </div>
+      </div>
+
+      <div class="latency-bar-wrap"><div id="latency-bar"></div></div>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-label">Latency</span>
+          <span class="stat-value" id="stat-latency">— ms</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">FPS</span>
+          <span class="stat-value" id="stat-fps">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Frames</span>
+          <span class="stat-value" id="stat-frames">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Device</span>
+          <span class="stat-value" id="stat-device">—</span>
+        </div>
+      </div>
+
+      <div id="log"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+// ── Config ───────────────────────────────────────────────────────────────────
+const WS_URL  = `ws://${location.host}/ws/lipsync`;
+const API_URL = `${location.protocol}//${location.host}/api/avatar`;
+const HEALTH_URL = `${location.protocol}//${location.host}/health`;
+
+// Audio config – must match server: 16 kHz mono 16-bit PCM
+const SAMPLE_RATE   = 16000;
+const CHUNK_FRAMES  = 640;    // 40 ms per chunk (25 fps)
+const CHUNK_BYTES   = CHUNK_FRAMES * 2;  // 16-bit = 2 bytes/sample
+
+// ── State ────────────────────────────────────────────────────────────────────
+let ws = null;
+let audioCtx = null;
+let processor = null;
+let analyser  = null;
+let stream    = null;
+let sourceNode = null;
+let resamplerNode = null;   // ScriptProcessor for resampling to 16 kHz
+let avatarReady = false;
+let running = false;
+let frameCount = 0;
+let lastFrameTime = performance.now();
+let fpsAccum = 0;
+let selectedFile = null;
+
+// PCM accumulation buffer (handles browser → 16 kHz conversion)
+let pcmBuffer = new Int16Array(0);
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const dropZone    = document.getElementById('drop-zone');
+const fileInput   = document.getElementById('file-input');
+const preview     = document.getElementById('avatar-preview');
+const uploadBtn   = document.getElementById('upload-btn');
+const startBtn    = document.getElementById('start-btn');
+const stopBtn     = document.getElementById('stop-btn');
+const canvas      = document.getElementById('avatar-canvas');
+const idleOverlay = document.getElementById('idle-overlay');
+const logEl       = document.getElementById('log');
+const statLatency = document.getElementById('stat-latency');
+const statFps     = document.getElementById('stat-fps');
+const statFrames  = document.getElementById('stat-frames');
+const statDevice  = document.getElementById('stat-device');
+const latencyBar  = document.getElementById('latency-bar');
+const liveBadge   = document.getElementById('live-badge');
+const serverBadge = document.getElementById('server-status-badge');
+const meterBars   = Array.from({length:16}, (_,i) => document.getElementById(`mb${i+1}`));
+const ctx         = canvas.getContext('2d');
+
+// ── Logging ──────────────────────────────────────────────────────────────────
+function log(msg, type='info') {
+  const line = document.createElement('div');
+  line.className = `entry-${type}`;
+  const ts = new Date().toLocaleTimeString('en', {hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  line.textContent = `[${ts}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (logEl.children.length > 50) logEl.removeChild(logEl.firstChild);
+}
+
+// ── Health check ─────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(HEALTH_URL);
+    const d = await r.json();
+    if (d.model_loaded) {
+      serverBadge.innerHTML = `<span class="badge badge-ok"><span class="dot dot-ok"></span>Model Ready</span>`;
+      if (d.device) statDevice.textContent = d.device.toUpperCase();
+      if (d.gpu?.name) statDevice.textContent = d.gpu.name.replace('NVIDIA ', '');
+      log(`Server ready · device=${d.device} · gpu=${d.gpu?.name ?? 'none'}`, 'ok');
+    } else {
+      serverBadge.innerHTML = `<span class="badge badge-warn"><span class="dot dot-warn"></span>Model Not Loaded</span>`;
+      log('Model not loaded. Run setup_models.py then restart.', 'err');
+    }
+    if (d.has_avatar) {
+      avatarReady = true;
+      startBtn.disabled = false;
+      log('Previous avatar still active.', 'info');
+    }
+  } catch(e) {
+    serverBadge.innerHTML = `<span class="badge badge-warn"><span class="dot dot-warn"></span>Offline</span>`;
+    log('Cannot reach server at ' + location.host, 'err');
+  }
+}
+
+// ── File handling ─────────────────────────────────────────────────────────────
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) handleFile(fileInput.files[0]);
+});
+
+function handleFile(file) {
+  selectedFile = file;
+  const url = URL.createObjectURL(file);
+  preview.src = url;
+  preview.style.display = 'block';
+  uploadBtn.disabled = false;
+  log(`Photo selected: ${file.name} (${(file.size/1024).toFixed(0)} KB)`);
+}
+
+uploadBtn.addEventListener('click', uploadAvatar);
+
+async function uploadAvatar() {
+  if (!selectedFile) return;
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = 'Uploading…';
+  try {
+    const fd = new FormData();
+    fd.append('file', selectedFile);
+    const r = await fetch(API_URL, { method: 'POST', body: fd });
+    const d = await r.json();
+    if (r.ok) {
+      avatarReady = true;
+      startBtn.disabled = false;
+      log('Avatar set on server. Press Start.', 'ok');
+      uploadBtn.textContent = '✓ Avatar Set';
+    } else {
+      log(`Upload failed: ${d.detail}`, 'err');
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Set as Avatar';
+    }
+  } catch(e) {
+    log(`Upload error: ${e.message}`, 'err');
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Set as Avatar';
+  }
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => log('WebSocket connected', 'ok');
+  ws.onerror = (e) => log('WebSocket error', 'err');
+  ws.onclose = () => {
+    log('WebSocket closed. Reconnecting in 3s…');
+    if (running) setTimeout(connectWS, 3000);
+  };
+
+  ws.onmessage = (evt) => {
+    if (evt.data instanceof ArrayBuffer) {
+      // JPEG frame received
+      renderFrame(evt.data);
+    } else {
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg.type === 'latency') {
+          updateLatencyUI(msg.ms, msg.frame);
+        } else if (msg.type === 'error') {
+          log(msg.message, 'err');
+        } else if (msg.type === 'info') {
+          log(msg.message);
+        }
+      } catch(_) {}
+    }
+  };
+}
+
+// ── Frame rendering ───────────────────────────────────────────────────────────
+function renderFrame(arrayBuffer) {
+  const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+  const url  = URL.createObjectURL(blob);
+  const img  = new Image();
+  img.onload = () => {
+    if (canvas.width !== img.width || canvas.height !== img.height) {
+      canvas.width  = img.width;
+      canvas.height = img.height;
+    }
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    idleOverlay.style.display = 'none';
+
+    // FPS calculation
+    frameCount++;
+    statFrames.textContent = frameCount;
+    const now = performance.now();
+    fpsAccum++;
+    if (now - lastFrameTime >= 1000) {
+      statFps.textContent = fpsAccum;
+      fpsAccum = 0;
+      lastFrameTime = now;
+    }
+  };
+  img.src = url;
+}
+
+function updateLatencyUI(ms, frame) {
+  statLatency.textContent = ms.toFixed(0) + ' ms';
+  statLatency.className = 'stat-value ' + (ms < 300 ? 'fast' : 'slow');
+
+  const pct = Math.min((ms / 500) * 100, 100);
+  latencyBar.style.width = pct + '%';
+  latencyBar.style.background = ms < 200 ? '#00d4aa' : ms < 300 ? '#f59e0b' : '#ff4757';
+
+  liveBadge.innerHTML = `<span class="badge badge-ok"><span class="dot dot-ok"></span>Live · ${ms.toFixed(0)} ms</span>`;
+}
+
+// ── Audio capture & streaming ─────────────────────────────────────────────────
+startBtn.addEventListener('click', startStreaming);
+stopBtn.addEventListener('click', stopStreaming);
+
+async function startStreaming() {
+  if (running) return;
+  if (!avatarReady) { log('Set an avatar first.', 'err'); return; }
+
+  try {
+    // Request mic at native sample rate; we resample to 16 kHz manually
+    stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+    }});
+  } catch(e) {
+    log(`Microphone access denied: ${e.message}`, 'err');
+    return;
+  }
+
+  // Create a single AudioContext and explicitly resume it.
+  // Do NOT create a second context just to probe sampleRate — that can
+  // cause the browser to suspend the one we actually use.
+  audioCtx = new AudioContext();
+  await audioCtx.resume();                   // required in Chrome after 70
+  const nativeSR = audioCtx.sampleRate;
+  sourceNode = audioCtx.createMediaStreamSource(stream);
+
+  // ScriptProcessor for capturing PCM frames
+  const bufSize = 4096;
+  processor = audioCtx.createScriptProcessor(bufSize, 1, 1);
+
+  // Analyser for the level meter
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  sourceNode.connect(analyser);
+  sourceNode.connect(processor);
+  // Route through a silent GainNode so the audio graph stays alive
+  // without playing mic audio through the speakers (avoids echo).
+  const silentGain = audioCtx.createGain();
+  silentGain.gain.value = 0;
+  processor.connect(silentGain);
+  silentGain.connect(audioCtx.destination);
+
+  const resampleRatio = SAMPLE_RATE / nativeSR;
+  let resampleBuffer = new Float32Array(0);
+
+  processor.onaudioprocess = (e) => {
+    if (!running || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const input = e.inputBuffer.getChannelData(0);
+
+    // Resample from native SR to 16 kHz using linear interpolation
+    const resampled = resample(input, resampleRatio);
+
+    // Accumulate
+    const combined = new Float32Array(resampleBuffer.length + resampled.length);
+    combined.set(resampleBuffer);
+    combined.set(resampled, resampleBuffer.length);
+    resampleBuffer = combined;
+
+    // Send in 640-sample (40 ms) chunks
+    while (resampleBuffer.length >= CHUNK_FRAMES) {
+      const chunk = resampleBuffer.subarray(0, CHUNK_FRAMES);
+      resampleBuffer = resampleBuffer.subarray(CHUNK_FRAMES);
+      const pcm16 = floatToInt16(chunk);
+      ws.send(pcm16.buffer);
+    }
+  };
+
+  running = true;
+  startBtn.disabled = true;
+  stopBtn.disabled  = false;
+  log('Streaming started', 'ok');
+  animateMeter();
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) connectWS();
+}
+
+function stopStreaming() {
+  running = false;
+  if (processor)   { processor.disconnect(); processor = null; }
+  if (analyser)    { analyser.disconnect();  analyser  = null; }
+  if (sourceNode)  { sourceNode.disconnect(); sourceNode = null; }
+  if (stream)      { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (audioCtx)    { audioCtx.close(); audioCtx = null; }
+  startBtn.disabled = !avatarReady;
+  stopBtn.disabled  = true;
+  liveBadge.innerHTML = `<span class="badge badge-idle"><span class="dot dot-idle"></span>Stopped</span>`;
+  log('Streaming stopped');
+  meterBars.forEach(b => b.style.height = '3px');
+}
+
+// ── Audio utilities ───────────────────────────────────────────────────────────
+function resample(input, ratio) {
+  const outLen = Math.round(input.length * ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const src = i / ratio;
+    const lo  = Math.floor(src);
+    const hi  = Math.min(lo + 1, input.length - 1);
+    const t   = src - lo;
+    out[i] = input[lo] * (1 - t) + input[hi] * t;
+  }
+  return out;
+}
+
+function floatToInt16(float32) {
+  const int16 = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    int16[i] = s < 0 ? s * 32768 : s * 32767;
+  }
+  return int16;
+}
+
+// ── Audio meter animation ─────────────────────────────────────────────────────
+function animateMeter() {
+  if (!running || !analyser) return;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+  const step = Math.floor(data.length / meterBars.length);
+  meterBars.forEach((bar, i) => {
+    const val = data[i * step] / 255;
+    const h = Math.max(3, Math.round(val * 28));
+    bar.style.height = h + 'px';
+    bar.style.background = val > 0.7 ? 'var(--danger)' : val > 0.4 ? 'var(--accent)' : 'var(--accent2)';
+  });
+  requestAnimationFrame(animateMeter);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+checkHealth();
+connectWS();
+</script>
+</body>
+</html>
