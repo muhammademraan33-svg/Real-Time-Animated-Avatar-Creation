@@ -351,7 +351,8 @@
 
 <script>
 // ── Config ───────────────────────────────────────────────────────────────────
-const WS_URL  = `ws://${location.host}/ws/lipsync`;
+// Use wss:// when the page is served over https (ngrok, Cloudflare Tunnel, Colab, etc.)
+const WS_URL  = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/lipsync`;
 const API_URL = `${location.protocol}//${location.host}/api/avatar`;
 const HEALTH_URL = `${location.protocol}//${location.host}/health`;
 
