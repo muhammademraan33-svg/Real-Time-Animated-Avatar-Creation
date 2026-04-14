@@ -1,4 +1,4 @@
-"""Generate colab_full_demo.ipynb — full FastAPI + tunnel on Colab GPU."""
+"""Generate colab_full_demo.ipynb — FastAPI + Cloudflare tunnel; fully automated on Colab."""
 import json
 from pathlib import Path
 
@@ -32,51 +32,63 @@ def code(s: str):
     })
 
 
-md("""# Full lipsync demo on Colab GPU (FastAPI + browser)
+md("""# Full lipsync demo on Colab GPU
 
-This notebook **starts the same web app** as on your PC: upload a photo, **Start**, speak into the mic. Inference runs on the **Colab GPU** (T4/L4).
+**Only manual steps in Colab:** **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**.
 
-## Steps
+When the last cell prints **OPEN IN BROWSER:** `https://…trycloudflare.com` — open that link in a **new tab**, allow the **microphone**, upload a photo → **Set as Avatar** → **Start** → speak.
 
-1. **Runtime → Change runtime type → GPU** (T4 is fine).
-2. **Get this repo** onto Colab (clone cell below). If you used **Open in Colab** from GitHub, run the path cell — it often finds the repo under `/content/…`.
-3. Run **all cells in order**. Wait until you see a **public https://…trycloudflare.com** URL.
-4. **Open that URL in a normal browser tab** (not Colab’s output frame). Allow the **microphone** when asked.
-5. Upload a portrait → **Set as Avatar** → **Start** → speak.
-
-**Note:** Cloudflare quick tunnels are temporary and can be slow the first time. For a polished client deliverable, also record a **local GPU** screen capture.
-
-The UI uses **wss://** when the page is HTTPS so WebSockets work behind the tunnel (included in `static/index.html`).
+The notebook clones your repo if needed, installs dependencies, starts FastAPI on GPU, and opens a public HTTPS tunnel (no signup).
 """)
 
-code("""# If needed: clone your GitHub repo (edit URL). Skip if path cell already found the project.
-# !git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /content/avatar
-""")
+code("""# Auto-setup: find full repo (server + static) or shallow-clone to /content/avatar
+import shutil
+import subprocess
+from pathlib import Path
 
-code("""from pathlib import Path
+REPO_URL = "https://github.com/muhammademraan33-svg/Real-Time-Animated-Avatar-Creation.git"
 
-_candidates = [
-    Path("/content/avatar"),
-    Path("/content/Real-Time-Animated-Avatar-Creation-Contest"),
-]
-PROJECT = None
-for c in _candidates:
-    if (c / "server" / "main.py").is_file() and (c / "static" / "index.html").is_file():
-        PROJECT = c.resolve()
-        break
 
-if PROJECT is None:
-    raise FileNotFoundError(
-        "Clone or upload the repo so server/main.py and static/index.html exist "
-        "(e.g. under /content/avatar)."
+def _is_full_repo(p: Path) -> bool:
+    return (
+        (p / "server" / "main.py").is_file()
+        and (p / "static" / "index.html").is_file()
     )
+
+
+def get_project() -> Path:
+    preferred = [
+        Path("/content/avatar"),
+        Path("/content/Real-Time-Animated-Avatar-Creation"),
+    ]
+    for p in preferred:
+        if _is_full_repo(p):
+            print("Using existing repo:", p)
+            return p.resolve()
+    for p in Path("/content").iterdir():
+        if p.is_dir() and _is_full_repo(p):
+            print("Using existing repo:", p)
+            return p.resolve()
+    dest = Path("/content/avatar")
+    if dest.exists():
+        shutil.rmtree(dest)
+    subprocess.run(
+        ["git", "clone", "--depth", "1", REPO_URL, str(dest)],
+        check=True,
+    )
+    print("Cloned to", dest)
+    return dest.resolve()
+
+
+PROJECT = get_project()
 print("PROJECT =", PROJECT)
 """)
 
 code("""import subprocess
+
 subprocess.run(["apt-get", "update", "-qq"], check=False)
 subprocess.run(
-    ["apt-get", "install", "-qq", "-y", "ffmpeg", "libsndfile1", "libgl1-mesa-glx"],
+    ["apt-get", "install", "-qq", "-y", "git", "ffmpeg", "libsndfile1", "libgl1-mesa-glx"],
     check=False,
 )
 print("apt deps OK")
@@ -85,7 +97,11 @@ print("apt deps OK")
 code("""import subprocess
 import sys
 
-# GPU PyTorch first, then requirements from your repo
+if "get_project" not in globals():
+    raise RuntimeError("Run all cells from the top (Runtime → Run all), or run the setup cell first.")
+
+PROJECT = get_project()
+
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
     "torch", "torchvision", "--index-url", "https://download.pytorch.org/whl/cu121",
@@ -103,6 +119,11 @@ print("torch", torch.__version__, "| CUDA:", torch.cuda.is_available(), torch.cu
 
 code("""import os
 from pathlib import Path
+
+if "get_project" not in globals():
+    raise RuntimeError("Run all cells from the top.")
+
+PROJECT = get_project()
 
 from huggingface_hub import hf_hub_download
 
@@ -123,7 +144,11 @@ import time
 
 import requests
 
-# Stop previous runs if you re-execute the notebook
+if "get_project" not in globals():
+    raise RuntimeError("Run all cells from the top.")
+
+PROJECT = get_project()
+
 subprocess.run(["pkill", "-f", "uvicorn"], check=False)
 subprocess.run(["pkill", "-f", "cloudflared"], check=False)
 time.sleep(1)
@@ -164,7 +189,9 @@ import threading
 import time
 import urllib.request
 
-# Cloudflare quick tunnel — no signup; URL changes each session
+if "get_project" not in globals():
+    raise RuntimeError("Run all cells from the top.")
+
 BIN = "/content/cloudflared"
 if not os.path.isfile(BIN):
     url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
@@ -182,7 +209,6 @@ p = subprocess.Popen(
 )
 
 public = {"url": None}
-# [.] matches a literal dot (no escape issues in generated notebook)
 URL_RE = re.compile(r"https://[a-zA-Z0-9.-]+[.]trycloudflare[.]com")
 
 
@@ -192,6 +218,7 @@ def reader():
         m = URL_RE.search(line)
         if m:
             public["url"] = m.group(0)
+
 
 threading.Thread(target=reader, daemon=True).start()
 
@@ -206,7 +233,7 @@ if public["url"]:
     print("OPEN IN BROWSER:", u)
     print("=" * 60)
 else:
-    print("Could not parse tunnel URL — read Cloudflare lines above for https://…trycloudflare.com")
+    print("Could not parse tunnel URL — read Cloudflare output above for https://…trycloudflare.com")
 """)
 
 out = Path(__file__).resolve().parent / "colab_full_demo.ipynb"

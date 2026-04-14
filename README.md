@@ -75,10 +75,12 @@ Expected response when GPU is active:
 
 | Notebook | What it does |
 |---|---|
-| [`notebooks/colab_gpu_smoke_test.ipynb`](notebooks/colab_gpu_smoke_test.ipynb) | **Benchmark only** — loads Wav2Lip on GPU and prints inference **latency (ms)**. |
-| [`notebooks/colab_full_demo.ipynb`](notebooks/colab_full_demo.ipynb) | **Full web app** — starts FastAPI + Uvicorn on the Colab GPU, exposes a **public HTTPS URL** (Cloudflare quick tunnel), open it in your browser: upload photo, **Start**, speak into the mic (same flow as localhost). Requires cloning this repo on Colab (or uploading a zip) so `server/` and `static/` are present. |
+| [`notebooks/colab_gpu_smoke_test.ipynb`](notebooks/colab_gpu_smoke_test.ipynb) | **Benchmark** — auto-clones this repo if needed, loads Wav2Lip on GPU, prints **latency (ms)**. |
+| [`notebooks/colab_full_demo.ipynb`](notebooks/colab_full_demo.ipynb) | **Full web app** — same as above plus FastAPI + **public HTTPS URL** (Cloudflare tunnel). |
 
-The UI uses **wss://** when the page is HTTPS so WebSockets work behind the tunnel (`static/index.html`).
+**In Colab (only steps you do by hand):** **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**. The first code cell finds an existing clone under `/content` or runs `git clone` for you. No manual `git` commands.
+
+The UI uses **wss://** on HTTPS pages (`static/index.html`).
 
 ---
 

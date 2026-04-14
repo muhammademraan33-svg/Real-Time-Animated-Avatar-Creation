@@ -1,4 +1,4 @@
-"""One-off helper to emit colab_gpu_smoke_test.ipynb — run if you edit cells in code."""
+"""Emit colab_gpu_smoke_test.ipynb — GPU latency benchmark; fully automated on Colab."""
 import json
 from pathlib import Path
 
@@ -17,60 +17,84 @@ nb = {
     "cells": [],
 }
 
+
 def md(s: str):
-    nb["cells"].append({"cell_type": "markdown", "metadata": {"id": f"c{len(nb['cells'])}"}, "source": s.splitlines(keepends=True)})
+    nb["cells"].append({
+        "cell_type": "markdown",
+        "metadata": {"id": f"c{len(nb['cells'])}"},
+        "source": s.splitlines(keepends=True),
+    })
+
 
 def code(s: str):
-    nb["cells"].append({"cell_type": "code", "execution_count": None, "metadata": {"id": f"c{len(nb['cells'])}"}, "outputs": [], "source": s.splitlines(keepends=True)})
+    nb["cells"].append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {"id": f"c{len(nb['cells'])}"},
+        "outputs": [],
+        "source": s.splitlines(keepends=True),
+    })
 
-md("""# Wav2Lip GPU smoke test (proof of concept)
 
-This notebook **runs the same Wav2Lip checkpoint on a real NVIDIA GPU** (Colab T4/L4, etc.) and prints **measured inference latency in milliseconds**. Use it when reviewers need evidence beyond “it will work on GPU.”
+md("""# Wav2Lip GPU smoke test
 
-## Before you run
+**Only manual steps in Colab:** **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**.
 
-1. **Runtime → Change runtime type → GPU** (required).
-2. **Get the project code on Colab** — pick one:
-   - **A)** Push this repo to GitHub, then run the `git clone` cell below (edit the URL).
-   - **B)** Zip your project folder, **Upload** in Colab Files, unzip to `/content/avatar` so `server/wav2lip_model.py` exists.
+This notebook finds or clones the GitHub repo, installs CUDA PyTorch, downloads `wav2lip_gan.pth`, and prints **inference latency (ms)** on the Colab GPU.
 
-3. The checkpoint `wav2lip_gan.pth` is downloaded automatically from Hugging Face (same source as `setup_models.py`).
-
----
-**Expected:** `CUDA: True`, GPU name, mean inference **~10–40 ms** on T4 (batch size 1). CPU would be ~80–200 ms.
+**Expected:** `CUDA: True`, GPU name, mean **~10–40 ms** on T4.
 """)
 
-code("""# Optional: clone your GitHub repo (replace URL). Skip if you uploaded a zip to /content/avatar
-# !git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git /content/avatar
-""")
-
-code("""import os
+code("""# Auto-setup: find repo under /content or shallow-clone into /content/avatar
+import shutil
+import subprocess
 from pathlib import Path
 
-# Project root on Colab (must contain server/wav2lip_model.py)
-PROJECT = Path("/content/avatar")
-if not (PROJECT / "server" / "wav2lip_model.py").is_file():
-    raise FileNotFoundError(
-        "Missing server/wav2lip_model.py. Clone this repo to /content/avatar "
-        "or unzip the project there, then re-run."
+REPO_URL = "https://github.com/muhammademraan33-svg/Real-Time-Animated-Avatar-Creation.git"
+
+
+def get_project() -> Path:
+    # Locate server/wav2lip_model.py under /content, else shallow-clone.
+    preferred = [
+        Path("/content/avatar"),
+        Path("/content/Real-Time-Animated-Avatar-Creation"),
+    ]
+    for p in preferred:
+        if (p / "server" / "wav2lip_model.py").is_file():
+            print("Using existing repo:", p)
+            return p.resolve()
+    for p in Path("/content").iterdir():
+        if p.is_dir() and (p / "server" / "wav2lip_model.py").is_file():
+            print("Using existing repo:", p)
+            return p.resolve()
+    dest = Path("/content/avatar")
+    if dest.exists():
+        shutil.rmtree(dest)
+    subprocess.run(
+        ["git", "clone", "--depth", "1", REPO_URL, str(dest)],
+        check=True,
     )
-print("Project OK:", PROJECT.resolve())
+    print("Cloned to", dest)
+    return dest.resolve()
+
+
+PROJECT = get_project()
+print("PROJECT =", PROJECT)
 """)
 
-code("""# PyTorch with CUDA 12.1 wheels (matches Dockerfile / consumer GPUs)
+code("""# PyTorch CUDA + helpers
 %pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cu121
 %pip install -q "numpy>=1.24,<2.0" huggingface_hub tqdm
 """)
 
-code("""import sys
-import torch
+code("""import torch
 
 print("torch:", torch.__version__)
 print("CUDA available:", torch.cuda.is_available())
 if torch.cuda.is_available():
     print("GPU:", torch.cuda.get_device_name(0))
 else:
-    print("WARNING: No GPU. Enable Runtime → Change runtime type → GPU.")
+    print("WARNING: No GPU — enable Runtime → Change runtime type → GPU, then Run all again.")
 """)
 
 code("""import statistics
@@ -80,7 +104,10 @@ from pathlib import Path
 
 import torch
 
-PROJECT = Path("/content/avatar")
+if "get_project" not in globals():
+    raise RuntimeError("Run all cells from the top (Runtime → Run all), or run the setup cell first.")
+
+PROJECT = get_project()
 sys.path.insert(0, str(PROJECT / "server"))
 
 from huggingface_hub import hf_hub_download
@@ -96,11 +123,9 @@ checkpoint_path = hf_hub_download(
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = load_wav2lip(checkpoint_path, device=device)
 
-# Dummy inputs matching real-time inference (1 mel frame + 96x96 face)
 mel = torch.zeros(1, 1, 80, 16, device=device)
 face = torch.zeros(1, 6, 96, 96, device=device)
 
-# Warm-up (CUDA kernels compile on first runs)
 with torch.no_grad():
     for _ in range(5):
         _ = model(mel, face)
@@ -124,8 +149,6 @@ print("Wav2Lip GAN — single forward pass (batch=1)")
 print("Device:", device, "|", torch.cuda.get_device_name(0) if device == "cuda" else "CPU")
 print(f"Mean latency: {mean_ms:.1f} ms | median: {p50_ms:.1f} ms")
 print("=" * 60)
-if device == "cpu":
-    print("For contest POC, re-run with a GPU runtime to show <300 ms end-to-end is realistic.")
 """)
 
 out = Path(__file__).resolve().parent / "colab_gpu_smoke_test.ipynb"
