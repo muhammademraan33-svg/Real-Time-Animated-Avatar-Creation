@@ -93,11 +93,11 @@ class FaceProcessor:
         crop: FaceCrop,
     ) -> np.ndarray:
         """
-        Paste the Wav2Lip output back into *base_frame*.
+        Blend only the mouth-centric region from Wav2Lip back into base_frame.
 
-        Only the lower 55 % of the generated face (mouth / chin area) is
-        blended back so the eyes and forehead stay sharp from the original.
-        A Gaussian-blurred alpha mask feathers the seam invisibly.
+        This keeps the original eyes/forehead sharp while making lip motion
+        clearly visible.  The mask focuses on the lower-centre face region
+        where viseme changes happen.
         """
         x1, y1, x2, y2 = crop.x1, crop.y1, crop.x2, crop.y2
         face_h = y2 - y1
@@ -105,36 +105,36 @@ class FaceProcessor:
         if face_h <= 0 or face_w <= 0:
             return base_frame.copy()
 
-        # Model output: (96,96,3) float32 RGB [0,1] → BGR uint8
+        # Model output: (96,96,3) float32 RGB [0,1] -> BGR uint8
         gen_rgb = (generated_face_01 * 255.0).clip(0, 255).astype(np.uint8)
         gen_bgr = cv2.cvtColor(gen_rgb, cv2.COLOR_RGB2BGR)
+        gen_up = cv2.resize(gen_bgr, (face_w, face_h), interpolation=cv2.INTER_LANCZOS4)
 
-        # ── Paste lower 55 % (mouth region) only ────────────────────────────
-        # Row 44 in 96-px face ≈ below nose → animated mouth lives here
-        src_row  = int(FACE_SIZE * 0.45)          # 43 in 96-px space
-        dst_y    = y1 + int(face_h * 0.45)        # same fraction in original
-        paste_h  = y2 - dst_y
-        paste_w  = face_w
+        # Build a mouth-focused soft mask:
+        # - ellipse centered around mouth
+        # - extra support for lower lip/chin strip
+        yy, xx = np.mgrid[0:face_h, 0:face_w].astype(np.float32)
+        cx = face_w * 0.50
+        cy = face_h * 0.68
+        rx = max(1.0, face_w * 0.33)
+        ry = max(1.0, face_h * 0.24)
+        ellipse = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2
+        alpha_ellipse = np.clip(1.0 - ellipse, 0.0, 1.0)
 
-        if paste_h <= 0:
-            return base_frame.copy()
+        alpha = alpha_ellipse
+        strip_y = int(face_h * 0.62)
+        if strip_y < face_h:
+            alpha[strip_y:, :] = np.maximum(alpha[strip_y:, :], 0.55)
 
-        gen_lower = gen_bgr[src_row:, :]           # (53, 96, 3)
-        gen_up    = cv2.resize(gen_lower, (paste_w, paste_h),
-                               interpolation=cv2.INTER_CUBIC)
+        # Soften edges, but keep center strong for visible lip motion.
+        sigma = max(2.0, face_h * 0.04)
+        alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=sigma, sigmaY=sigma)
+        alpha = np.clip(alpha * 1.25, 0.0, 1.0)[:, :, None]
 
-        # Gaussian-blurred alpha mask for seamless blending
-        alpha = np.ones((paste_h, paste_w), dtype=np.float32)
-        border = max(6, paste_h // 6)
-        alpha[:border,  :] = np.linspace(0, 1, border,  dtype=np.float32)[:, None]
-        alpha[-border:, :] = np.linspace(1, 0, border,  dtype=np.float32)[:, None]
-        alpha = cv2.GaussianBlur(alpha, (0, 0), sigmaX=border * 0.4)
-        alpha = alpha[:, :, None]                  # (H, W, 1) for broadcasting
-
-        out  = base_frame.copy()
-        roi  = out[dst_y:y2, x1:x2].astype(np.float32)
+        out = base_frame.copy()
+        roi = out[y1:y2, x1:x2].astype(np.float32)
         gen_f = gen_up.astype(np.float32)
-        out[dst_y:y2, x1:x2] = (roi * (1.0 - alpha) + gen_f * alpha).clip(0, 255).astype(np.uint8)
+        out[y1:y2, x1:x2] = (roi * (1.0 - alpha) + gen_f * alpha).clip(0, 255).astype(np.uint8)
         return out
 
     # ── Face detection ────────────────────────────────────────────────────────

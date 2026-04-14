@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 import numpy as np
 import librosa
+from scipy import signal
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 SAMPLE_RATE: int = 16_000
@@ -30,6 +31,8 @@ FMIN: float = 55.0
 FMAX: float = 7_600.0
 MIN_LEVEL_DB: float = -100.0
 REF_LEVEL_DB: float = 20.0
+PREEMPHASIS: float = 0.97
+MAX_ABS_VALUE: float = 4.0
 
 FPS: int = 25
 MEL_STEP_SIZE: int = 16        # mel frames per chunk fed to Wav2Lip
@@ -67,8 +70,14 @@ def _amp_to_db(x: np.ndarray) -> np.ndarray:
 
 
 def _normalize(S: np.ndarray) -> np.ndarray:
-    """Map dB values in [MIN_LEVEL_DB, 0] → [0, 1]."""
-    return np.clip((S - MIN_LEVEL_DB) / (-MIN_LEVEL_DB), 0.0, 1.0)
+    """
+    Match Wav2Lip training normalization (symmetric mels in [-4, 4]).
+    """
+    return np.clip(
+        (2.0 * MAX_ABS_VALUE) * ((S - MIN_LEVEL_DB) / (-MIN_LEVEL_DB)) - MAX_ABS_VALUE,
+        -MAX_ABS_VALUE,
+        MAX_ABS_VALUE,
+    )
 
 
 def wav_to_mel(wav: np.ndarray) -> np.ndarray:
@@ -79,9 +88,11 @@ def wav_to_mel(wav: np.ndarray) -> np.ndarray:
         wav: 1-D float32 array, values in [-1, 1], sample rate = 16 000 Hz.
 
     Returns:
-        mel: (N_MELS=80, T) float32 array, values in [0, 1].
+        mel: (N_MELS=80, T) float32 array, values in [-4, 4] (Wav2Lip scale).
     """
     wav = wav.astype(np.float32)
+    # Match original Wav2Lip preprocessing: pre-emphasis before STFT.
+    wav = signal.lfilter([1.0, -PREEMPHASIS], [1.0], wav).astype(np.float32)
     D = librosa.stft(
         y=wav,
         n_fft=N_FFT,

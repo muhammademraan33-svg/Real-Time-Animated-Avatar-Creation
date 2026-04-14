@@ -567,8 +567,10 @@ async function startStreaming() {
     // Request mic at native sample rate; we resample to 16 kHz manually
     stream = await navigator.mediaDevices.getUserMedia({ audio: {
       channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
+      // Keep raw articulation details; browser DSP often damps visemes.
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
     }});
   } catch(e) {
     log(`Microphone access denied: ${e.message}`, 'err');

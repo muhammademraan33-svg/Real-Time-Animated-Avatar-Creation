@@ -36,12 +36,14 @@ md("""# Full lipsync demo on Colab GPU
 
 **Only manual steps in Colab:** **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**.
 
-When the last cell prints **OPEN IN BROWSER:** `https://…trycloudflare.com` — open that link in a **new tab**, allow the **microphone**, upload a photo → **Set as Avatar** → **Start** → speak.
+Push your latest code to **GitHub `main`** first. If the repo is already under `/content` from a previous session, the first cell runs **`git pull --ff-only`** so you test the same code you just pushed.
+
+When the last cell prints **OPEN IN BROWSER:** `https://…trycloudflare.com` — open that link in a **new tab**, allow the **microphone**, upload a photo → **Set as Avatar** → **Start** → speak. Hard-refresh (`Ctrl+F5`) if the page looks cached.
 
 The notebook clones your repo if needed, installs dependencies, starts FastAPI on GPU, and opens a public HTTPS tunnel (no signup).
 """)
 
-code("""# Auto-setup: find full repo (server + static) or shallow-clone to /content/avatar
+code("""# Auto-setup: git pull existing clone, or shallow-clone to /content/avatar
 import shutil
 import subprocess
 from pathlib import Path
@@ -56,18 +58,38 @@ def _is_full_repo(p: Path) -> bool:
     )
 
 
+def _git_pull_if_possible(repo: Path) -> None:
+    if not (repo / ".git").is_dir():
+        return
+    subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin", REPO_URL], check=False)
+    r = subprocess.run(
+        ["git", "-C", str(repo), "pull", "--ff-only"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode == 0:
+        print("git pull: OK (latest origin)")
+    else:
+        print("git pull skipped or failed. stderr:", (r.stderr or "")[-300:])
+
+
 def get_project() -> Path:
     preferred = [
         Path("/content/avatar"),
         Path("/content/Real-Time-Animated-Avatar-Creation"),
     ]
     for p in preferred:
+        if p.is_dir():
+            _git_pull_if_possible(p)
         if _is_full_repo(p):
-            print("Using existing repo:", p)
+            print("Using repo:", p)
             return p.resolve()
     for p in Path("/content").iterdir():
-        if p.is_dir() and _is_full_repo(p):
-            print("Using existing repo:", p)
+        if not p.is_dir():
+            continue
+        _git_pull_if_possible(p)
+        if _is_full_repo(p):
+            print("Using repo:", p)
             return p.resolve()
     dest = Path("/content/avatar")
     if dest.exists():

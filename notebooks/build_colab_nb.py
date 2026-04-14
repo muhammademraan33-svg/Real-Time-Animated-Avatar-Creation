@@ -40,12 +40,14 @@ md("""# Wav2Lip GPU smoke test
 
 **Only manual steps in Colab:** **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**.
 
-This notebook finds or clones the GitHub repo, installs CUDA PyTorch, downloads `wav2lip_gan.pth`, and prints **inference latency (ms)** on the Colab GPU.
+Push your latest code to **GitHub `main`** first, then run this notebook. If a copy of the repo already exists under `/content`, the first cell runs **`git pull --ff-only`** so you get the newest commit without re-cloning.
+
+This notebook installs CUDA PyTorch, downloads `wav2lip_gan.pth`, and prints **inference latency (ms)** on the Colab GPU.
 
 **Expected:** `CUDA: True`, GPU name, mean **~10–40 ms** on T4.
 """)
 
-code("""# Auto-setup: find repo under /content or shallow-clone into /content/avatar
+code("""# Auto-setup: update existing clone, or shallow-clone into /content/avatar
 import shutil
 import subprocess
 from pathlib import Path
@@ -53,19 +55,38 @@ from pathlib import Path
 REPO_URL = "https://github.com/muhammademraan33-svg/Real-Time-Animated-Avatar-Creation.git"
 
 
+def _git_pull_if_possible(repo: Path) -> None:
+    if not (repo / ".git").is_dir():
+        return
+    subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin", REPO_URL], check=False)
+    r = subprocess.run(
+        ["git", "-C", str(repo), "pull", "--ff-only"],
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode == 0:
+        print("git pull: OK (latest origin)")
+    else:
+        print("git pull skipped or failed (ok on first clone). stderr:", (r.stderr or "")[-300:])
+
+
 def get_project() -> Path:
-    # Locate server/wav2lip_model.py under /content, else shallow-clone.
     preferred = [
         Path("/content/avatar"),
         Path("/content/Real-Time-Animated-Avatar-Creation"),
     ]
     for p in preferred:
+        if p.is_dir():
+            _git_pull_if_possible(p)
         if (p / "server" / "wav2lip_model.py").is_file():
-            print("Using existing repo:", p)
+            print("Using repo:", p)
             return p.resolve()
     for p in Path("/content").iterdir():
-        if p.is_dir() and (p / "server" / "wav2lip_model.py").is_file():
-            print("Using existing repo:", p)
+        if not p.is_dir():
+            continue
+        _git_pull_if_possible(p)
+        if (p / "server" / "wav2lip_model.py").is_file():
+            print("Using repo:", p)
             return p.resolve()
     dest = Path("/content/avatar")
     if dest.exists():

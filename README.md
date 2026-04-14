@@ -78,7 +78,7 @@ Expected response when GPU is active:
 | [`notebooks/colab_gpu_smoke_test.ipynb`](notebooks/colab_gpu_smoke_test.ipynb) | **Benchmark** — auto-clones this repo if needed, loads Wav2Lip on GPU, prints **latency (ms)**. |
 | [`notebooks/colab_full_demo.ipynb`](notebooks/colab_full_demo.ipynb) | **Full web app** — same as above plus FastAPI + **public HTTPS URL** (Cloudflare tunnel). |
 
-**In Colab (only steps you do by hand):** **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**. The first code cell finds an existing clone under `/content` or runs `git clone` for you. No manual `git` commands.
+**In Colab (only steps you do by hand):** Push your latest commit to **GitHub `main`**, then **Runtime → Change runtime type → T4 GPU**, then **Runtime → Run all**. The first code cell runs **`git pull --ff-only`** on an existing clone under `/content`, or **`git clone`** if needed — no manual git commands.
 
 The UI uses **wss://** on HTTPS pages (`static/index.html`).
 
