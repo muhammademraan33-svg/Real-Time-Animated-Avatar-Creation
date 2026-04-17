@@ -136,6 +136,7 @@ class AudioBuffer:
 
         # Fractional mel frame accumulator (handles non-integer steps)
         self._mel_frame_accum: float = 0.0
+        self._primed = False
 
     # Samples needed per video frame at 16 kHz / 25 fps = 640 samples
     SAMPLES_PER_FRAME: int = SAMPLE_RATE // FPS  # 640
@@ -167,9 +168,17 @@ class AudioBuffer:
             frame_pcm = new_samples[offset: offset + self.SAMPLES_PER_FRAME]
             offset += self.SAMPLES_PER_FRAME
 
-            # Slide the window: drop oldest, append newest
-            self._buffer = np.roll(self._buffer, -self.SAMPLES_PER_FRAME)
-            self._buffer[-self.SAMPLES_PER_FRAME:] = frame_pcm
+            if not self._primed:
+                # Avoid the first 200 ms being mostly silence.
+                # Bootstrap with the earliest speech chunk repeated so the first
+                # visible mouth movement appears quickly after the user starts talking.
+                reps = AUDIO_BUFFER_SAMPLES // len(frame_pcm)
+                self._buffer[:] = np.tile(frame_pcm, reps)
+                self._primed = True
+            else:
+                # Slide the window: drop oldest, append newest
+                self._buffer = np.roll(self._buffer, -self.SAMPLES_PER_FRAME)
+                self._buffer[-self.SAMPLES_PER_FRAME:] = frame_pcm
 
             mel = wav_to_mel(self._buffer)  # (80, T_total)
             # Take the last MEL_STEP_SIZE columns (most recent 200 ms)
@@ -198,3 +207,4 @@ class AudioBuffer:
             self._pending.clear()
             self._pending_samples = 0
             self._mel_frame_accum = 0.0
+            self._primed = False

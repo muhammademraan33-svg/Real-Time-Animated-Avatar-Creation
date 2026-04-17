@@ -358,7 +358,7 @@ const HEALTH_URL = `${location.protocol}//${location.host}/health`;
 
 // Audio config – must match server: 16 kHz mono 16-bit PCM
 const SAMPLE_RATE   = 16000;
-const CHUNK_FRAMES  = 640;    // 40 ms per chunk (25 fps)
+const CHUNK_FRAMES  = 320;    // 20 ms per chunk for lower capture latency
 const CHUNK_BYTES   = CHUNK_FRAMES * 2;  // 16-bit = 2 bytes/sample
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -375,6 +375,8 @@ let frameCount = 0;
 let lastFrameTime = performance.now();
 let fpsAccum = 0;
 let selectedFile = null;
+let renderBusy = false;
+let pendingFrame = null;
 
 // PCM accumulation buffer (handles browser → 16 kHz conversion)
 let pcmBuffer = new Int16Array(0);
@@ -471,6 +473,11 @@ async function uploadAvatar() {
     if (r.ok) {
       avatarReady = true;
       startBtn.disabled = false;
+      if (preview.complete) {
+        drawUploadedPreview();
+      } else {
+        preview.onload = () => drawUploadedPreview();
+      }
       log('Avatar set on server. Press Start.', 'ok');
       uploadBtn.textContent = '✓ Avatar Set';
     } else {
@@ -518,30 +525,75 @@ function connectWS() {
 
 // ── Frame rendering ───────────────────────────────────────────────────────────
 function renderFrame(arrayBuffer) {
-  const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
-  const url  = URL.createObjectURL(blob);
-  const img  = new Image();
-  img.onload = () => {
-    if (canvas.width !== img.width || canvas.height !== img.height) {
-      canvas.width  = img.width;
-      canvas.height = img.height;
-    }
-    ctx.drawImage(img, 0, 0);
-    URL.revokeObjectURL(url);
-    idleOverlay.style.display = 'none';
+  // If browser decode/draw lags, keep only the newest frame.
+  if (renderBusy) {
+    pendingFrame = arrayBuffer;
+    return;
+  }
+  renderBusy = true;
+  drawFrame(arrayBuffer);
+}
 
-    // FPS calculation
-    frameCount++;
-    statFrames.textContent = frameCount;
-    const now = performance.now();
-    fpsAccum++;
-    if (now - lastFrameTime >= 1000) {
-      statFps.textContent = fpsAccum;
-      fpsAccum = 0;
-      lastFrameTime = now;
+async function drawFrame(arrayBuffer) {
+  try {
+    const blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+    if ('createImageBitmap' in window) {
+      const bitmap = await createImageBitmap(blob);
+      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+      }
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      onFrameDrawn();
+    } else {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        if (canvas.width !== img.width || canvas.height !== img.height) {
+          canvas.width = img.width;
+          canvas.height = img.height;
+        }
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        onFrameDrawn();
+      };
+      img.src = url;
+      return;
     }
-  };
-  img.src = url;
+  } finally {
+    renderBusy = false;
+    if (pendingFrame) {
+      const latest = pendingFrame;
+      pendingFrame = null;
+      renderFrame(latest);
+    }
+  }
+}
+
+function onFrameDrawn() {
+  idleOverlay.style.display = 'none';
+
+  frameCount++;
+  statFrames.textContent = frameCount;
+  const now = performance.now();
+  fpsAccum++;
+  if (now - lastFrameTime >= 1000) {
+    statFps.textContent = fpsAccum;
+    fpsAccum = 0;
+    lastFrameTime = now;
+  }
+}
+
+function drawUploadedPreview() {
+  if (!preview || !preview.complete) return;
+  const w = preview.naturalWidth || preview.width;
+  const h = preview.naturalHeight || preview.height;
+  if (!w || !h) return;
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(preview, 0, 0, w, h);
+  idleOverlay.style.display = 'none';
 }
 
 function updateLatencyUI(ms, frame) {
@@ -586,7 +638,7 @@ async function startStreaming() {
   sourceNode = audioCtx.createMediaStreamSource(stream);
 
   // ScriptProcessor for capturing PCM frames
-  const bufSize = 4096;
+  const bufSize = 1024;
   processor = audioCtx.createScriptProcessor(bufSize, 1, 1);
 
   // Analyser for the level meter

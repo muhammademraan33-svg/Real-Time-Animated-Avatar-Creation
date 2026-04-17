@@ -58,7 +58,7 @@ class AvatarEngine:
         self._mel_tensor: torch.Tensor | None = None
         self._dtype = torch.float16 if device == "cuda" else torch.float32
         self._use_autocast = device == "cuda"
-        self._jpeg_quality = int(os.environ.get("JPEG_QUALITY", "80"))
+        self._jpeg_quality = int(os.environ.get("JPEG_QUALITY", "72"))
 
         # Latency tracking
         self._last_latency_ms: float = 0.0
@@ -119,7 +119,7 @@ class AvatarEngine:
             ValueError: if no face is found.
         """
         # Bound avatar frame size to keep compositing/JPEG encode fast.
-        max_side = int(os.environ.get("MAX_AVATAR_SIDE", "448"))
+        max_side = int(os.environ.get("MAX_AVATAR_SIDE", "384"))
         image_bgr = resize_keep_aspect(image_bgr, max_side, max_side)
 
         self._avatar = self._face_proc.prepare(image_bgr)
