@@ -253,7 +253,6 @@ class AvatarEngine:
             base_frame=self._avatar.original_frame.copy(),
             generated_face_01=pred_np,
             crop=self._avatar.crop,
-            frame_index=self._total_frames + 1,
         )
         return composited
 

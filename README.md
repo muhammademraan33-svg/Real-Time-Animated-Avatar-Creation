@@ -274,12 +274,6 @@ curl -X POST http://localhost:8000/api/avatar \
 OBS → Add Source → Media Source → URL: http://localhost:8000/stream/mjpeg
 ```
 
-### `GET /webrtc` + `POST /api/webrtc/offer` — WebRTC video output
-
-- Open `http://localhost:8000/webrtc`
-- Keep the main app running for avatar upload + microphone input
-- Click **Connect WebRTC Video** to receive the latest avatar frames through a WebRTC video track
-
 ### `GET /health` — Status + GPU info
 
 ```json

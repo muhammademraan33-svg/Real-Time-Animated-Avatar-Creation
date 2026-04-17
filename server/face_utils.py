@@ -91,7 +91,6 @@ class FaceProcessor:
         base_frame: np.ndarray,
         generated_face_01: np.ndarray,
         crop: FaceCrop,
-        frame_index: int = 0,
     ) -> np.ndarray:
         """
         Blend only the mouth-centric region from Wav2Lip back into base_frame.
@@ -100,7 +99,6 @@ class FaceProcessor:
         clearly visible.  The mask focuses on the lower-centre face region
         where viseme changes happen.
         """
-        base_frame, crop = self._apply_head_motion(base_frame, crop, frame_index)
         x1, y1, x2, y2 = crop.x1, crop.y1, crop.x2, crop.y2
         face_h = y2 - y1
         face_w = x2 - x1
@@ -138,85 +136,7 @@ class FaceProcessor:
         roi = out[y1:y2, x1:x2].astype(np.float32)
         gen_f = gen_up.astype(np.float32)
         out[y1:y2, x1:x2] = (roi * (1.0 - alpha) + gen_f * alpha).clip(0, 255).astype(np.uint8)
-        self._apply_eye_blink(out, crop, frame_index)
         return out
-
-    @staticmethod
-    def _apply_head_motion(base_frame: np.ndarray, crop: FaceCrop, frame_index: int) -> tuple[np.ndarray, FaceCrop]:
-        """Apply a tiny global sway so the portrait feels less static."""
-        h, w = base_frame.shape[:2]
-        dx = int(round(2.0 * np.sin(frame_index * 0.11)))
-        dy = int(round(1.0 * np.sin(frame_index * 0.07)))
-        if dx == 0 and dy == 0:
-            return base_frame, crop
-
-        mat = np.float32([[1, 0, dx], [0, 1, dy]])
-        moved = cv2.warpAffine(
-            base_frame,
-            mat,
-            (w, h),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_REFLECT,
-        )
-        moved_crop = FaceCrop(
-            x1=max(0, min(w, crop.x1 + dx)),
-            y1=max(0, min(h, crop.y1 + dy)),
-            x2=max(0, min(w, crop.x2 + dx)),
-            y2=max(0, min(h, crop.y2 + dy)),
-        )
-        return moved, moved_crop
-
-    @staticmethod
-    def _apply_eye_blink(frame_bgr: np.ndarray, crop: FaceCrop, frame_index: int) -> None:
-        """Overlay a lightweight deterministic blink over the eye region."""
-        blink_cycle = frame_index % 120
-        blink_strength_map = {0: 0.35, 1: 0.8, 2: 1.0, 3: 0.55}
-        strength = blink_strength_map.get(blink_cycle, 0.0)
-        if strength <= 0.0:
-            return
-
-        x1, y1, x2, y2 = crop.x1, crop.y1, crop.x2, crop.y2
-        face_h = y2 - y1
-        face_w = x2 - x1
-        if face_h <= 0 or face_w <= 0:
-            return
-
-        eye_boxes = [
-            (
-                x1 + int(face_w * 0.16),
-                y1 + int(face_h * 0.26),
-                int(face_w * 0.26),
-                int(face_h * 0.10),
-            ),
-            (
-                x1 + int(face_w * 0.58),
-                y1 + int(face_h * 0.26),
-                int(face_w * 0.26),
-                int(face_h * 0.10),
-            ),
-        ]
-
-        for ex, ey, ew, eh in eye_boxes:
-            if ew <= 0 or eh <= 0:
-                continue
-            ex2 = min(frame_bgr.shape[1], ex + ew)
-            ey2 = min(frame_bgr.shape[0], ey + eh)
-            ex = max(0, ex)
-            ey = max(0, ey)
-            if ex2 <= ex or ey2 <= ey:
-                continue
-
-            roi = frame_bgr[ey:ey2, ex:ex2]
-            if roi.size == 0:
-                continue
-
-            lid_h = max(1, int((ey2 - ey) * 0.5 * strength))
-            eyelid_color = roi.mean(axis=(0, 1), dtype=np.float32)
-
-            overlay = roi.astype(np.float32)
-            overlay[:lid_h, :, :] = eyelid_color
-            overlay[-lid_h:, :, :] = eyelid_color
-            frame_bgr[ey:ey2, ex:ex2] = overlay.clip(0, 255).astype(np.uint8)
 
     # ── Face detection ────────────────────────────────────────────────────────
 

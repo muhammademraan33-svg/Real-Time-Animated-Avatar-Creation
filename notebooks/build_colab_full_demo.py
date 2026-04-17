@@ -178,8 +178,6 @@ time.sleep(1)
 log_path = "/tmp/uvicorn_avatar.log"
 log = open(log_path, "w")
 env = {**os.environ, "CHECKPOINT_PATH": os.environ.get("CHECKPOINT_PATH", "")}
-env["MAX_AVATAR_SIDE"] = os.environ.get("MAX_AVATAR_SIDE", "384")
-env["JPEG_QUALITY"] = os.environ.get("JPEG_QUALITY", "72")
 proc = subprocess.Popen(
     [os.sys.executable, "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"],
     cwd=str(PROJECT),
