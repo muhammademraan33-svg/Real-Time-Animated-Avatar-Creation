@@ -30,6 +30,16 @@ from fastapi.staticfiles import StaticFiles
 
 from .avatar_engine import AvatarEngine
 
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+    from av import VideoFrame
+    _WEBRTC_AVAILABLE = True
+    _WEBRTC_IMPORT_ERROR = None
+except Exception as exc:  # pragma: no cover - optional dependency
+    RTCPeerConnection = RTCSessionDescription = VideoStreamTrack = VideoFrame = None
+    _WEBRTC_AVAILABLE = False
+    _WEBRTC_IMPORT_ERROR = str(exc)
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +72,9 @@ async def lifespan(app: FastAPI):
         logger.error("⚠  %s", exc)
         logger.error("⚠  Run  python setup_models.py  then restart the server.")
     yield
+    if _peer_connections:
+        await asyncio.gather(*(pc.close() for pc in list(_peer_connections)), return_exceptions=True)
+        _peer_connections.clear()
 
 
 app = FastAPI(
@@ -89,6 +102,46 @@ engine: AvatarEngine | None = None
 # Latest frame for MJPEG stream (shared state)
 _latest_frame: bytes | None = None
 _latest_frame_event = asyncio.Event()
+_peer_connections: set = set()
+
+
+if _WEBRTC_AVAILABLE:
+    class AvatarVideoTrack(VideoStreamTrack):
+        """WebRTC video track backed by the latest generated JPEG frame."""
+
+        def __init__(self):
+            super().__init__()
+            self._last_frame: bytes | None = None
+
+        async def recv(self):
+            pts, time_base = await self.next_timestamp()
+
+            frame = _latest_frame
+            if frame is None:
+                try:
+                    await asyncio.wait_for(_latest_frame_event.wait(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    pass
+                _latest_frame_event.clear()
+                frame = _latest_frame
+
+            if frame is None:
+                frame = self._last_frame
+
+            if frame is None:
+                blank = np.zeros((256, 256, 3), dtype=np.uint8)
+                video = VideoFrame.from_ndarray(blank, format="bgr24")
+            else:
+                self._last_frame = frame
+                nparr = np.frombuffer(frame, np.uint8)
+                image_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if image_bgr is None:
+                    image_bgr = np.zeros((256, 256, 3), dtype=np.uint8)
+                video = VideoFrame.from_ndarray(image_bgr, format="bgr24")
+
+            video.pts = pts
+            video.time_base = time_base
+            return video
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -119,6 +172,80 @@ async def health():
         "last_inference_ms": round(engine.last_latency_ms, 1) if engine else None,
         "device": engine.device if engine else ("cuda" if torch.cuda.is_available() else "cpu"),
         "gpu": gpu_info or None,
+    }
+
+
+@app.get("/webrtc", response_class=HTMLResponse)
+async def webrtc_demo():
+    if not _WEBRTC_AVAILABLE:
+        return HTMLResponse(
+            f"<h1>WebRTC unavailable</h1><p>{_WEBRTC_IMPORT_ERROR}</p>",
+            status_code=503,
+        )
+
+    html = """
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Avatar WebRTC Output</title></head>
+<body style="background:#111;color:#eee;font-family:sans-serif;padding:24px">
+  <h2>Avatar WebRTC Output</h2>
+  <p>Set the avatar and start speech on the main app first, then click connect.</p>
+  <button id="connect">Connect WebRTC Video</button>
+  <div style="margin-top:16px">
+    <video id="video" autoplay playsinline controls style="max-width:100%;border:1px solid #333"></video>
+  </div>
+  <script>
+    const btn = document.getElementById('connect');
+    const video = document.getElementById('video');
+    btn.onclick = async () => {
+      btn.disabled = true;
+      const pc = new RTCPeerConnection();
+      pc.ontrack = (evt) => { video.srcObject = evt.streams[0]; };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const resp = await fetch('/api/webrtc/offer', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({sdp: offer.sdp, type: offer.type}),
+      });
+      const answer = await resp.json();
+      await pc.setRemoteDescription(answer);
+    };
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(html)
+
+
+@app.post("/api/webrtc/offer")
+async def webrtc_offer(offer: dict):
+    if not _WEBRTC_AVAILABLE:
+        raise HTTPException(503, f"WebRTC dependencies unavailable: {_WEBRTC_IMPORT_ERROR}")
+
+    sdp = offer.get("sdp")
+    typ = offer.get("type")
+    if not sdp or not typ:
+        raise HTTPException(400, "Offer must include 'sdp' and 'type'.")
+
+    pc = RTCPeerConnection()
+    _peer_connections.add(pc)
+
+    @pc.on("connectionstatechange")
+    async def _on_connectionstatechange():
+        state = pc.connectionState
+        if state in {"failed", "closed", "disconnected"}:
+            await pc.close()
+            _peer_connections.discard(pc)
+
+    await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=typ))
+    pc.addTrack(AvatarVideoTrack())
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return {
+        "sdp": pc.localDescription.sdp,
+        "type": pc.localDescription.type,
     }
 
 
